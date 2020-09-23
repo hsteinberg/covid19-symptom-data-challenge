@@ -125,7 +125,7 @@ taste_smell_map = ggplot() +
   scale_fill_viridis_d(direction = -1, 
                        name = "Decile of Percent Self\nAnosmia/Ageusia\n18-34 yrs\n(Smoothed and Weighted)"
                        )+
-  ggtitle("Recent Loss of Taste and Smell in\nYoung Adults by State\nAugust 28, 2020") +
+  ggtitle("Recent Loss of Taste or Smell in\nYoung Adults by State\nAugust 28, 2020") +
   theme(
     text = element_text(color = "#22211d"),
     plot.title = element_text(size = 12, face = "bold", hjust = 0.5)
