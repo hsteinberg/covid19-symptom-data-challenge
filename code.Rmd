@@ -1,0 +1,189 @@
+---
+title: "Loss of Taste and Smell in Young Adults as COVID-19 Mild Disease Indicator"
+author: "Hannah Steinberg"
+date: "9/22/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(covidcast)
+library(tidyverse)
+library(magrittr)
+library(plotly)
+library(vroom)
+```
+
+
+```{r cook_county}
+#FB data by county
+county_data = vroom("data/overall-county-smoothed.csv")
+
+#FB data for Cook County, IL
+cook_data = county_data %>%
+  filter(fips == "17031")
+
+#Cases for Cook County, IL
+cook_cases = covidcast_signal("indicator-combination", "confirmed_7dav_incidence_num", geo_type = "county", geo_values = "17031")
+
+#Loss of smell/taste data in 18-34 year olds in Cook County, IL
+cook_smell_taste = cook_data %>%
+  filter(gender == "overall",
+         age_bucket == "18-34"
+         ) %>%
+  select(date, state_code, fips, smoothed_pct_self_anosmia_ageusia, smoothed_pct_self_anosmia_ageusia_weighted, smoothed_pct_cli_anosmia_ageusia, smoothed_pct_cli_anosmia_ageusia_weighted)
+
+#Plot asssociation
+cook_graph = 
+  ggplot() +
+  geom_bar(data = cook_cases, aes(x = time_value, y = value/700), 
+           stat = "identity", color = "grey", fill = "grey") +
+  geom_line(data = cook_smell_taste, aes(x = date, y = smoothed_pct_self_anosmia_ageusia), 
+            color = "#1E555C", size = 1) +
+  scale_y_continuous(
+    name = "Smoothed Percent Self\nAnosmia/Ageusia 18-34 yrs", 
+    sec.axis = sec_axis(~.*700, name = "Confirmed Cases (7 day average)", breaks = 700*seq(0,3,1))
+  ) +
+  theme_minimal() +
+  xlab("Date") +
+  theme(axis.title.y = element_text(color = "#1E555C", margin = margin(0,10,0,0)),
+        axis.title.y.right = element_text(color = "#525252", margin = margin(0,0,0,10)),
+        #panel.grid.major.y  = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank()
+        #panel.grid = element_blank()
+        ) +
+  labs(subtitle = "Self-reported recent loss in taste or smell in those 18-34 is associated\nwith confirmed cases of COVID-19 in Cook County, Illinois")
+
+#Save plot
+ggsave(filename = "results/Cook.png", plot = cook_graph, width = 8, height = 5, units = "in", dpi = 720)
+
+#correlations
+test_data = cook_smell_taste %>%
+  left_join(cook_cases, by = c("date" = "time_value")) %>%
+  rename(cases = value)
+
+cor.test(test_data$cases, test_data$smoothed_pct_self_anosmia_ageusia) #.855
+
+```
+
+
+```{r US}
+#FB data by state-smoothed
+states_data = vroom("data/overall-state-smoothed.csv")
+
+#get just taste/smell data for young adults
+states_taste_smell = states_data %>%
+  filter(date == "2020-08-28",
+         gender == "overall",
+         age_bucket == "18-34")  %>%
+  select(date, state_code, smoothed_pct_self_anosmia_ageusia, smoothed_pct_self_anosmia_ageusia_weighted, smoothed_pct_cli_anosmia_ageusia, smoothed_pct_cli_anosmia_ageusia_weighted)
+  
+#Case incidence by state- 7 day averages
+states_cases = covidcast_signal("indicator-combination", "confirmed_7dav_incidence_prop", geo_type = "state", start_day = "2020-08-28", end_day = "2020-08-28") %>%
+  rename(incidence = value,
+         state_code = geo_value
+         ) %>%
+  select(incidence, state_code)
+
+#Case incidence by state- 7 day averages- delayed by 3 days
+states_cases_delay = covidcast_signal("indicator-combination", "confirmed_7dav_incidence_prop", geo_type = "state", start_day = "2020-08-31", end_day = "2020-08-31") %>%
+  rename(incidence_delay = value,
+         state_code = geo_value
+         ) %>%
+  select(incidence_delay, state_code)
+
+#Join fb and case data
+states = states_taste_smell %>%
+  left_join(states_cases, by = "state_code") %>%
+  left_join(states_cases_delay, by = "state_code")
+
+
+#Map
+
+# 'fortify' the data to be able to show it with ggplot2 (we need a data frame format)
+spdf_fortified = read.csv("data/state_shapes.csv")%>%
+  left_join(states, by=c("state_code")) %>%
+  mutate(taste_smell_cat = factor(ntile(smoothed_pct_self_anosmia_ageusia_weighted, 10)),
+         incidence_cat = factor(ntile(incidence, 10)),
+         incidence_delay_cat = factor(ntile(incidence_delay, 10))
+         )
+
+# Calculate the centroid of each hexagon to add the label:
+centers = read.csv("data/state_centers.csv")
+
+
+# map taste smell
+taste_smell_map = ggplot() +
+  geom_polygon(data = spdf_fortified, color="white", 
+               aes(fill = taste_smell_cat, x = long, y = lat, group = group),
+               size=2, alpha=0.9) +
+  geom_text(data=centers, aes(x=x, y=y, label=id), color="black", size=4, alpha=.6) +
+  theme_void() +
+  scale_fill_viridis_d(direction = -1, 
+                       name = "Decile of Percent Self\nAnosmia/Ageusia\n18-34 yrs\n(Smoothed and Weighted)"
+                       )+
+  ggtitle("Recent Loss of Taste and Smell in\nYoung Adults by State\nAugust 28, 2020") +
+  theme(
+    text = element_text(color = "#22211d"),
+    plot.title = element_text(size = 12, face = "bold", hjust = 0.5)
+  ) +
+  coord_map() 
+
+#Save map
+ggsave(filename = "results/TasteSmellMapCat.png", plot = taste_smell_map, width = 8, height = 5, units = "in", dpi = 720)
+
+
+# map case incidence
+incidence_map = ggplot() +
+  geom_polygon(data = spdf_fortified, color="white", 
+               aes(fill = incidence_cat, x = long, y = lat, group = group),
+               size=2, alpha=0.9) +
+  geom_text(data=centers, aes(x=x, y=y, label=id), color="black", size=4, alpha=.6) +
+  theme_void() +
+  scale_fill_viridis_d(direction = -1, 
+                       name = "Decile of Confirmed\nCases per 100,000\n(7 Day Average)"
+                       )+
+  ggtitle("COVID-19 Incidence by State\nAugust 28, 2020") +
+  theme(
+    text = element_text(color = "#22211d"),
+    plot.title = element_text(size = 12, face = "bold", hjust = 0.5)
+  ) +
+  coord_map() 
+
+#Save map
+ggsave(filename = "results/IncidenceMapCat.png", plot = incidence_map, width = 8, height = 5, units = "in", dpi = 720)
+
+
+#map cases delayed 3 days
+incidence_delay_map = ggplot() +
+  geom_polygon(data = spdf_fortified, color="white", 
+               aes(fill = incidence_delay_cat, x = long, y = lat, group = group),
+               size=2, alpha=0.9) +
+  geom_text(data=centers, aes(x=x, y=y, label=id), color="black", size=4, alpha=.6) +
+  theme_void() +
+  scale_fill_viridis_d(direction = -1, 
+                       name = "Decile of Confirmed\nCases per 100,000\n(7 Day Average)"
+                       )+
+  ggtitle("COVID-19 Incidence by State\nAugust 31, 2020") +
+  theme(
+    text = element_text(color = "#22211d"),
+    plot.title = element_text(size = 12, face = "bold", hjust = 0.5)
+  ) +
+  coord_map() 
+
+#Save map
+ggsave(filename = "results/IncidenceDelayMapCat.png", plot = incidence_delay_map, width = 8, height = 5, units = "in", dpi = 720)
+
+#correlations
+cor.test(as.numeric(spdf_fortified$taste_smell_cat), as.numeric(spdf_fortified$incidence_cat)) #.776
+cor.test(as.numeric(spdf_fortified$taste_smell_cat), as.numeric(spdf_fortified$incidence_delay_cat)) #.743
+cor.test(as.numeric(spdf_fortified$taste_smell), as.numeric(spdf_fortified$incidence)) #.751
+cor.test(as.numeric(spdf_fortified$taste_smell), as.numeric(spdf_fortified$incidence_delay)) #.698
+
+#delay is not as correlated as same day data
+
+```
+
